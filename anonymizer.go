@@ -2,6 +2,8 @@ package main
 
 import (
     "io"
+    "strings"
+    "io/ioutil"
     "os"
     "fmt"
     "http"
@@ -10,22 +12,42 @@ import (
 func root(w http.ResponseWriter, r *http.Request) {
     fmt.Fprintf(w, "Index!")
 }
-func handle_http(w http.ResponseWriter, r *http.Request) {
-    var url string;
-    var response *http.Response;
-    var responseError os.Error;
-    fmt.Printf("%s %s %s\n", r.Method, r.RawURL,r.RemoteAddr)
-    url  = "http://"+r.URL.Path[6:]
-    newRequest,_ := http.NewRequest(r.Method, url, nil) 
-    c := &http.Client{} 
-    response, responseError = c.Do(newRequest)
-    for header := range response.Header {
-        w.Header().Add(header, response.Header.Get(header))
+var ReplacemendContentType = map[string] bool {
+    "text/html": true,
+    "text/javascript": true,
+    "application/x-javascript": true,
+    "application/javascript": true,
+    "text/plain": true,
+    "text/css": true,
+}
+
+func handle_http(responseWrite http.ResponseWriter, request *http.Request) {
+    var proxyResponse *http.Response;
+    var proxyResponseError os.Error;
+    fmt.Printf("%s %s %s %s\n", request.Method, request.RawURL, request.RemoteAddr)
+    url := "http://"+request.URL.Path[6:]
+    proxyRequest,_ := http.NewRequest(request.Method, url, nil) 
+    proxy := &http.Client{} 
+    proxyResponse, proxyResponseError = proxy.Do(proxyRequest)
+    if proxyResponseError != nil {
+        http.NotFound(responseWrite, request)
+        return
+    } 
+    for header := range proxyResponse.Header {
+        responseWrite.Header().Add(header, proxyResponse.Header.Get(header))
     }
-    if responseError != nil {
-        fmt.Fprintf(w, "pizda\n")
+    contentType := strings.Split(proxyResponse.Header.Get("Content-Type"), ";")[0]
+    if proxyResponseError != nil {
+        fmt.Fprintf(responseWrite, "pizda\n")
+    } else if ReplacemendContentType[contentType] {
+        body,_ := ioutil.ReadAll(proxyResponse.Body)
+        defer proxyResponse.Body.Close()
+        bodyString := strings.Replace(string(body), "http://", string("http://"+request.Host+"/http/"), -1)
+        //bodyString = strings.Replace(bodyString, "https://", string("http://"+request.Host+"/https/"), -1)
+        responseWrite.Write([]byte(bodyString))
+
     } else {
-        io.Copy(w, response.Body)
+        io.Copy(responseWrite, proxyResponse.Body)
     }
 }
 
